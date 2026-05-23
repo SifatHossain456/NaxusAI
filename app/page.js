@@ -83,29 +83,34 @@ function reducer(state, action) {
     case 'CHUNK':
       return {
         ...state,
-        conversations: state.conversations.map(c => ({
-          ...c,
-          messages: c.messages.map(m =>
-            m.id === action.msgId ? { ...m, content: m.content + action.text } : m
-          ),
-        })),
+        conversations: state.conversations.map(c => {
+          if (c.id !== action.convId) return c
+          return {
+            ...c,
+            messages: c.messages.map(m =>
+              m.id === action.msgId ? { ...m, content: m.content + action.text } : m
+            ),
+          }
+        }),
       }
 
     case 'FINISH':
       return {
         ...state,
-        conversations: state.conversations.map(c => ({
-          ...c,
-          messages: c.messages
-            // Remove empty placeholder if stream was aborted with no content
-            .filter(m => !(m.id === action.msgId && !action.error && !m.content))
-            .map(m => {
-              if (m.id !== action.msgId) return m
-              return action.error
-                ? { ...m, streaming: false, content: action.error, isError: true }
-                : { ...m, streaming: false }
-            }),
-        })),
+        conversations: state.conversations.map(c => {
+          if (c.id !== action.convId) return c
+          return {
+            ...c,
+            messages: c.messages
+              .filter(m => !(m.id === action.msgId && !action.error && !m.content))
+              .map(m => {
+                if (m.id !== action.msgId) return m
+                return action.error
+                  ? { ...m, streaming: false, content: action.error, isError: true }
+                  : { ...m, streaming: false }
+              }),
+          }
+        }),
       }
 
     default: return state
@@ -164,6 +169,10 @@ export default function Home() {
         e.preventDefault()
         if (activeConv?.messages.length > 0) dispatch({ type: 'CREATE' })
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+        e.preventDefault()
+        setSidebarOpen(o => !o)
+      }
       if (e.key === 'Escape' && streaming) abortRef.current?.abort()
     }
     window.addEventListener('keydown', onKey)
@@ -178,6 +187,25 @@ export default function Home() {
   function scrollToBottom() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
     setAtBottom(true)
+  }
+
+  /* Export active conversation as Markdown */
+  function exportConversation() {
+    if (!activeConv || !activeConv.messages.length) return
+    const lines = [`# ${activeConv.title}`, '']
+    for (const msg of activeConv.messages) {
+      if (msg.streaming) continue
+      lines.push(`## ${msg.role === 'user' ? 'You' : 'NexusAI'}`)
+      lines.push(msg.content)
+      lines.push('')
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `${activeConv.title.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.md`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   /* Send message — accepts optional overrideMsgs for retry */
@@ -233,14 +261,14 @@ export default function Home() {
           try {
             const { text: chunk, error } = JSON.parse(raw)
             if (error) throw new Error(error)
-            if (chunk)  dispatch({ type: 'CHUNK', msgId, text: chunk })
+            if (chunk)  dispatch({ type: 'CHUNK', msgId, convId, text: chunk })
           } catch {}
         }
       }
-      dispatch({ type: 'FINISH', msgId })
+      dispatch({ type: 'FINISH', msgId, convId })
     } catch (e) {
       dispatch({
-        type:  'FINISH', msgId,
+        type:  'FINISH', msgId, convId,
         error: e.name === 'AbortError' ? null : (e.message || 'Something went wrong.'),
       })
     } finally {
@@ -266,6 +294,7 @@ export default function Home() {
 
   const stopStream   = useCallback(() => abortRef.current?.abort(), [])
   const currentModel = MODELS.find(m => m.id === model)
+  const hasMessages  = (activeConv?.messages.length ?? 0) > 0
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -304,7 +333,7 @@ export default function Home() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {!sidebarOpen && (
-              <button className="btn-icon" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
+              <button className="btn-icon" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar (Ctrl+B)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <line x1="3" y1="6"  x2="21" y2="6"/>
                   <line x1="3" y1="12" x2="21" y2="12"/>
@@ -322,7 +351,17 @@ export default function Home() {
                 Generating
               </span>
             )}
-            {activeConv?.messages.length > 0 && (
+            {hasMessages && (
+              <button className="btn-ghost" onClick={exportConversation} aria-label="Export conversation as Markdown" title="Export as Markdown">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Export
+              </button>
+            )}
+            {hasMessages && (
               <button className="btn-ghost" onClick={() => dispatch({ type: 'CLEAR' })} aria-label="Clear conversation">
                 Clear
               </button>
@@ -338,7 +377,7 @@ export default function Home() {
           aria-label="Conversation"
           style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}
         >
-          {!activeConv?.messages.length ? (
+          {!hasMessages ? (
             <EmptyState model={currentModel} onSend={sendMessage} />
           ) : (
             <div
@@ -373,10 +412,12 @@ export default function Home() {
 
 /* ─── Empty state ─── */
 const EXAMPLE_PROMPTS = [
-  { icon: '💻', text: 'Write a Python script that scrapes product prices from a website' },
+  { icon: '💻', text: 'Write a Python function that parses JSON logs and extracts error messages' },
+  { icon: '🐛', text: 'Review this code for bugs, edge cases, and performance improvements' },
   { icon: '✍️', text: 'Draft a professional email declining a meeting politely' },
+  { icon: '📊', text: 'Explain the trade-offs between REST and GraphQL APIs' },
   { icon: '🔬', text: 'Explain quantum entanglement in simple terms with an analogy' },
-  { icon: '🐛', text: 'Review this code for bugs, edge cases, and improvements' },
+  { icon: '🎨', text: 'Generate 10 creative startup ideas for the AI productivity space' },
 ]
 
 function EmptyState({ model, onSend }) {
@@ -396,7 +437,7 @@ function EmptyState({ model, onSend }) {
         </h1>
         <p style={{ fontSize: 14, color: 'var(--t3)' }}>{model?.label} · {model?.desc}</p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, maxWidth: 540, width: '100%' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, maxWidth: 680, width: '100%' }}>
         {EXAMPLE_PROMPTS.map(({ icon, text }) => (
           <button key={text} className="prompt-chip anim-fade-up" onClick={() => onSend(text)} aria-label={`Try: ${text}`}>
             <span style={{ fontSize: 18, flexShrink: 0 }} aria-hidden="true">{icon}</span>

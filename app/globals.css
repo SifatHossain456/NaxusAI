@@ -314,6 +314,33 @@ html, body {
   color: var(--accent-2); transform: translateY(-1px);
 }
 
+/* ─── Sidebar search ─── */
+.sidebar-search-wrap {
+  display: flex; align-items: center; gap: 7;
+  padding: 0 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--border);
+  transition: border-color .15s;
+}
+.sidebar-search-wrap:focus-within {
+  border-color: var(--border-2);
+  background: rgba(255,255,255,0.06);
+}
+.sidebar-search {
+  flex: 1; padding: 7px 0; background: transparent;
+  border: none; outline: none; color: var(--t1);
+  font-size: 12px; font-family: inherit;
+}
+.sidebar-search::placeholder { color: var(--t3); }
+.sidebar-search::-webkit-search-cancel-button { display: none; }
+
+/* ─── Conversation count badge ─── */
+.conv-count {
+  font-size: 10px; font-weight: 700; color: var(--t3);
+  background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+  border-radius: 99px; padding: 1px 6px; min-width: 18px;
+  text-align: center; flex-shrink: 0;
+}
+
 /* ─── Mobile responsive ─── */
 @media (max-width: 767px) {
   .hide-mobile { display: none !important; }
