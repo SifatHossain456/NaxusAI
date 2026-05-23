@@ -1,25 +1,43 @@
 'use client'
-import { useState } from 'react'
+import { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { oneDark } from 'react-syntax-highlighter/dist/cjs/styles/prism'
 
-function CopyBtn({ text }) {
+/* Language display names */
+const LANG_NAMES = {
+  js: 'JavaScript', ts: 'TypeScript', jsx: 'JSX', tsx: 'TSX',
+  py: 'Python', python: 'Python', rs: 'Rust', go: 'Go',
+  java: 'Java', c: 'C', cpp: 'C++', cs: 'C#', rb: 'Ruby',
+  php: 'PHP', swift: 'Swift', kt: 'Kotlin', dart: 'Dart',
+  css: 'CSS', html: 'HTML', json: 'JSON', yaml: 'YAML', yml: 'YAML',
+  sql: 'SQL', bash: 'Bash', sh: 'Shell', md: 'Markdown',
+  xml: 'XML', graphql: 'GraphQL', text: 'Plain Text',
+}
+
+/* Copy button */
+function CopyBtn({ text, size = 'md' }) {
   const [copied, setCopied] = useState(false)
+
   function copy() {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
   }
+
   return (
-    <button className="copy-btn" onClick={copy}>
+    <button
+      className={`copy-code-btn${copied ? ' copied' : ''}`}
+      onClick={copy}
+      aria-label={copied ? 'Copied!' : 'Copy to clipboard'}
+    >
       {copied ? (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
       ) : (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <rect x="9" y="9" width="13" height="13" rx="2"/>
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
         </svg>
@@ -29,92 +47,130 @@ function CopyBtn({ text }) {
   )
 }
 
+/* Markdown components */
 const mdComponents = {
   code({ node, inline, className, children, ...props }) {
-    const lang    = (className || '').replace('language-', '') || 'text'
-    const codeStr = String(children).replace(/\n$/, '')
-    if (inline) return <code className={className} {...props}>{children}</code>
+    const langKey    = (className || '').replace('language-', '').toLowerCase() || 'text'
+    const langLabel  = LANG_NAMES[langKey] ?? langKey
+    const codeString = String(children).replace(/\n$/, '')
+
+    if (inline) {
+      return <code className={className} {...props}>{children}</code>
+    }
     return (
-      <div className="code-block">
+      <div className="code-block" role="region" aria-label={`${langLabel} code`}>
         <div className="code-header">
-          <span className="code-lang">{lang}</span>
-          <CopyBtn text={codeStr} />
+          <span className="code-lang" aria-label={`Language: ${langLabel}`}>{langLabel}</span>
+          <CopyBtn text={codeString} />
         </div>
         <SyntaxHighlighter
           style={oneDark}
-          language={lang}
+          language={langKey}
           PreTag="div"
-          customStyle={{ margin: 0, borderRadius: 0, fontSize: 13, background: '#12121c', padding: '14px 16px' }}
+          showLineNumbers={codeString.split('\n').length > 5}
+          lineNumberStyle={{ color: '#3a3a50', fontSize: 11, minWidth: 36, paddingRight: 12 }}
+          customStyle={{ margin: 0, borderRadius: 0, fontSize: 13, background: '#0e0e1a', padding: '14px 16px', lineHeight: 1.65 }}
           {...props}
         >
-          {codeStr}
+          {codeString}
         </SyntaxHighlighter>
       </div>
     )
   },
 }
 
-export default function Message({ message }) {
+/* ─── Message component ─── */
+function Message({ message }) {
   const isUser = message.role === 'user'
   const isEmpty = !message.content && message.streaming
 
   return (
-    <div className="msg-in" style={{
-      display: 'flex', gap: 14, padding: '18px 0',
-      borderBottom: '1px solid rgba(255,255,255,0.04)',
-      alignItems: 'flex-start',
-    }}>
+    <article
+      className="msg-wrap anim-fade-up"
+      aria-label={isUser ? 'Your message' : 'NexusAI response'}
+      style={{
+        display: 'flex', gap: 14, padding: '18px 0',
+        borderBottom: '1px solid rgba(255,255,255,0.038)',
+        alignItems: 'flex-start',
+      }}
+    >
       {/* Avatar */}
-      <div style={{
-        width: 34, height: 34, borderRadius: 10, flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15,
-        ...(isUser
-          ? { background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)' }
-          : { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 4px 14px rgba(99,102,241,.25)' }
-        ),
-      }}>
+      <div
+        aria-hidden="true"
+        style={{
+          width: 34, height: 34, borderRadius: 11, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 15, userSelect: 'none',
+          ...(isUser
+            ? { background: 'rgba(255,255,255,0.07)', border: '1px solid var(--border-2)' }
+            : {
+                background: 'linear-gradient(135deg, #6d5ce7, #a78bfa)',
+                boxShadow: '0 4px 16px rgba(139,120,248,.28)',
+              }
+          ),
+        }}
+      >
         {isUser ? '👤' : '✦'}
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
-        <p style={{
-          fontSize: 11, fontWeight: 700, color: 'var(--t3)',
-          textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 6,
-        }}>
+      <div style={{ flex: 1, minWidth: 0, paddingTop: 3 }}>
+        {/* Name + role */}
+        <p
+          aria-hidden="true"
+          style={{
+            fontSize: 12, fontWeight: 700, letterSpacing: '.06em',
+            textTransform: 'uppercase', marginBottom: 7,
+            color: isUser ? 'var(--t3)' : 'var(--accent-2)',
+          }}
+        >
           {isUser ? 'You' : 'NexusAI'}
         </p>
 
+        {/* Message body */}
         {isUser ? (
-          <p style={{ fontSize: 15, color: 'var(--t1)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.65 }}>
+          <p style={{
+            fontSize: 15, color: 'var(--t1)', whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word', lineHeight: 1.7,
+          }}>
             {message.content}
           </p>
         ) : (
           <>
             {isEmpty ? (
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '4px 0' }}>
+              <div className="dot-wrap" aria-label="NexusAI is thinking">
                 <span className="dot" />
                 <span className="dot" />
                 <span className="dot" />
               </div>
             ) : message.isError ? (
-              <p style={{ color: 'var(--red)', fontSize: 14, fontStyle: 'italic' }}>{message.content}</p>
+              <p style={{
+                color: 'var(--red)', fontSize: 14, fontStyle: 'italic',
+                background: 'rgba(248,113,113,0.07)', border: '1px solid rgba(248,113,113,0.2)',
+                padding: '10px 14px', borderRadius: 10,
+              }}>
+                ⚠ {message.content}
+              </p>
             ) : (
               <div className="prose">
-                <ReactMarkdown components={mdComponents}>{message.content}</ReactMarkdown>
-                {message.streaming && <span className="cursor" />}
+                <ReactMarkdown components={mdComponents}>
+                  {message.content}
+                </ReactMarkdown>
+                {message.streaming && <span className="cursor" aria-label="generating" />}
               </div>
             )}
           </>
         )}
 
-        {/* Copy button for completed AI messages */}
+        {/* Hover actions — visible on msg-wrap:hover via CSS */}
         {!isUser && !message.streaming && message.content && !message.isError && (
-          <div style={{ marginTop: 10 }}>
+          <div className="msg-actions" role="toolbar" aria-label="Message actions">
             <CopyBtn text={message.content} />
           </div>
         )}
       </div>
-    </div>
+    </article>
   )
 }
+
+export default memo(Message)

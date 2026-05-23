@@ -1,113 +1,163 @@
 'use client'
-import { useState, useRef, useEffect, useCallback } from 'react'
-import Sidebar from '@/components/Sidebar'
-import Message from '@/components/Message'
-import InputBar from '@/components/InputBar'
+import { useReducer, useState, useRef, useEffect, useCallback } from 'react'
+import Sidebar       from '@/components/Sidebar'
+import Message       from '@/components/Message'
+import InputBar      from '@/components/InputBar'
 import ModelSelector from '@/components/ModelSelector'
 
-function genId() { return Math.random().toString(36).slice(2, 9) }
-function genTitle(text) { return text.slice(0, 42) + (text.length > 42 ? '…' : '') }
+/* ─── Helpers ─── */
+function genId()       { return Math.random().toString(36).slice(2, 9) }
+function genTitle(txt) { return txt.slice(0, 46) + (txt.length > 46 ? '…' : '') }
 
+/* ─── Models ─── */
 export const MODELS = [
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku',  desc: 'Fast & efficient',   badge: 'Fast'  },
-  { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet', desc: 'Balanced & powerful', badge: 'Best'  },
-  { id: 'claude-opus-4-7',           label: 'Claude Opus',   desc: 'Most capable',        badge: 'Power' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku',  desc: 'Fastest responses',  tag: 'Fast'  },
+  { id: 'claude-sonnet-4-6',         label: 'Claude Sonnet', desc: 'Best for most tasks', tag: 'Best'  },
+  { id: 'claude-opus-4-7',           label: 'Claude Opus',   desc: 'Most intelligent',    tag: 'Power' },
 ]
 
+/* ─── Reducer ─── */
+function reducer(state, action) {
+  switch (action.type) {
+    case 'INIT':
+      return { conversations: action.convs, activeId: action.convs[0]?.id ?? null }
+
+    case 'CREATE': {
+      const conv = { id: genId(), title: 'New Chat', messages: [], createdAt: Date.now() }
+      return { conversations: [conv, ...state.conversations], activeId: conv.id }
+    }
+
+    case 'SELECT':
+      return { ...state, activeId: action.id }
+
+    case 'DELETE': {
+      const next = state.conversations.filter(c => c.id !== action.id)
+      if (!next.length) {
+        const conv = { id: genId(), title: 'New Chat', messages: [], createdAt: Date.now() }
+        return { conversations: [conv], activeId: conv.id }
+      }
+      const activeId = action.id === state.activeId ? next[0].id : state.activeId
+      return { conversations: next, activeId }
+    }
+
+    case 'CLEAR':
+      return {
+        ...state,
+        conversations: state.conversations.map(c =>
+          c.id === state.activeId ? { ...c, messages: [], title: 'New Chat' } : c
+        ),
+      }
+
+    case 'START_TURN': {
+      const { convId, text, msgId } = action
+      return {
+        ...state,
+        conversations: state.conversations.map(c => {
+          if (c.id !== convId) return c
+          return {
+            ...c,
+            title: c.messages.length === 0 ? genTitle(text) : c.title,
+            messages: [
+              ...c.messages,
+              { role: 'user',      content: text },
+              { role: 'assistant', content: '', id: msgId, streaming: true },
+            ],
+          }
+        }),
+      }
+    }
+
+    case 'CHUNK':
+      return {
+        ...state,
+        conversations: state.conversations.map(c => ({
+          ...c,
+          messages: c.messages.map(m =>
+            m.id === action.msgId ? { ...m, content: m.content + action.text } : m
+          ),
+        })),
+      }
+
+    case 'FINISH':
+      return {
+        ...state,
+        conversations: state.conversations.map(c => ({
+          ...c,
+          messages: c.messages.map(m => {
+            if (m.id !== action.msgId) return m
+            return action.error
+              ? { ...m, streaming: false, content: action.error, isError: true }
+              : { ...m, streaming: false }
+          }),
+        })),
+      }
+
+    default: return state
+  }
+}
+
+/* ─── Component ─── */
 export default function Home() {
-  const [conversations, setConversations] = useState([])
-  const [activeId,      setActiveId]      = useState(null)
-  const [model,         setModel]         = useState(MODELS[1].id)
-  const [streaming,     setStreaming]      = useState(false)
-  const [sidebarOpen,   setSidebarOpen]   = useState(true)
+  const [{ conversations, activeId }, dispatch] = useReducer(reducer, { conversations: [], activeId: null })
+  const [model,       setModel]       = useState(MODELS[1].id)
+  const [streaming,   setStreaming]   = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
   const bottomRef = useRef(null)
   const abortRef  = useRef(null)
 
-  // Restore from localStorage
+  const activeConv = conversations.find(c => c.id === activeId) ?? null
+
+  /* Restore from localStorage */
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('nexusai_convs') || '[]')
-      if (saved.length) {
-        setConversations(saved)
-        setActiveId(saved[0].id)
-      } else {
-        createConv()
-      }
-    } catch { createConv() }
+      if (saved.length) dispatch({ type: 'INIT', convs: saved })
+      else              dispatch({ type: 'CREATE' })
+    } catch { dispatch({ type: 'CREATE' }) }
   }, [])
 
-  // Persist to localStorage
+  /* Persist to localStorage */
   useEffect(() => {
     if (conversations.length) {
       localStorage.setItem('nexusai_convs', JSON.stringify(conversations))
     }
   }, [conversations])
 
-  // Auto-scroll on new content
+  /* Auto-scroll */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [conversations])
 
-  const activeConv = conversations.find(c => c.id === activeId)
-
-  function createConv() {
-    const id   = genId()
-    const conv = { id, title: 'New Chat', messages: [], createdAt: Date.now() }
-    setConversations(prev => [conv, ...prev])
-    setActiveId(id)
-    return id
-  }
-
-  function startNewChat() {
-    if (activeConv?.messages.length === 0) return
-    createConv()
-  }
-
-  function deleteConv(id) {
-    const next = conversations.filter(c => c.id !== id)
-    if (next.length === 0) {
-      const nid = genId()
-      setConversations([{ id: nid, title: 'New Chat', messages: [], createdAt: Date.now() }])
-      setActiveId(nid)
-    } else {
-      setConversations(next)
-      if (id === activeId) setActiveId(next[0].id)
+  /* Keyboard shortcuts */
+  useEffect(() => {
+    function onKey(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        if (activeConv?.messages.length > 0) dispatch({ type: 'CREATE' })
+      }
+      if (e.key === 'Escape' && streaming) abortRef.current?.abort()
     }
-  }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [streaming, activeConv])
 
-  function clearChat() {
-    setConversations(prev =>
-      prev.map(c => c.id === activeId ? { ...c, messages: [], title: 'New Chat' } : c)
-    )
-  }
-
+  /* Send message */
   const sendMessage = useCallback(async (text) => {
     if (!text.trim() || streaming) return
 
-    const userMsg       = { role: 'user', content: text.trim() }
-    const placeholderId = genId()
-    const currentMsgs   = activeConv?.messages ?? []
+    const convId   = activeId
+    const convMsgs = activeConv?.messages ?? []
+    const msgId    = genId()
 
-    setConversations(prev => prev.map(c => {
-      if (c.id !== activeId) return c
-      return {
-        ...c,
-        title: currentMsgs.length === 0 ? genTitle(text) : c.title,
-        messages: [
-          ...c.messages,
-          userMsg,
-          { role: 'assistant', content: '', id: placeholderId, streaming: true },
-        ],
-      }
-    }))
-
+    dispatch({ type: 'START_TURN', convId, text: text.trim(), msgId })
     setStreaming(true)
+
     const ctrl = new AbortController()
     abortRef.current = ctrl
 
     try {
       const apiMessages = [
-        ...currentMsgs.map(m => ({ role: m.role, content: m.content })),
+        ...convMsgs.map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: text.trim() },
       ]
 
@@ -118,11 +168,11 @@ export default function Home() {
         signal: ctrl.signal,
       })
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`Server responded with ${res.status}`)
 
       const reader = res.body.getReader()
       const dec    = new TextDecoder()
-      let buf      = ''
+      let   buf    = ''
 
       while (true) {
         const { done, value } = await reader.read()
@@ -138,50 +188,26 @@ export default function Home() {
           try {
             const { text: chunk, error } = JSON.parse(raw)
             if (error) throw new Error(error)
-            if (chunk) {
-              setConversations(prev => prev.map(c => {
-                if (c.id !== activeId) return c
-                return {
-                  ...c,
-                  messages: c.messages.map(m =>
-                    m.id === placeholderId ? { ...m, content: m.content + chunk } : m
-                  ),
-                }
-              }))
-            }
+            if (chunk)  dispatch({ type: 'CHUNK', msgId, text: chunk })
           } catch {}
         }
       }
+
+      dispatch({ type: 'FINISH', msgId })
     } catch (e) {
-      if (e.name !== 'AbortError') {
-        setConversations(prev => prev.map(c => {
-          if (c.id !== activeId) return c
-          return {
-            ...c,
-            messages: c.messages.map(m =>
-              m.id === placeholderId
-                ? { ...m, content: `Error: ${e.message || 'Something went wrong.'}`, isError: true }
-                : m
-            ),
-          }
-        }))
-      }
+      dispatch({
+        type: 'FINISH', msgId,
+        error: e.name === 'AbortError' ? null : (e.message || 'Something went wrong.'),
+      })
     } finally {
-      setConversations(prev => prev.map(c => {
-        if (c.id !== activeId) return c
-        return {
-          ...c,
-          messages: c.messages.map(m =>
-            m.id === placeholderId ? { ...m, streaming: false } : m
-          ),
-        }
-      }))
       setStreaming(false)
       abortRef.current = null
     }
   }, [activeId, activeConv, model, streaming])
 
-  function stopStream() { abortRef.current?.abort() }
+  const stopStream = useCallback(() => abortRef.current?.abort(), [])
+
+  const currentModel = MODELS.find(m => m.id === model)
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -190,30 +216,31 @@ export default function Home() {
         open={sidebarOpen}
         conversations={conversations}
         activeId={activeId}
-        onSelect={setActiveId}
-        onNew={startNewChat}
-        onDelete={deleteConv}
+        onSelect={id => dispatch({ type: 'SELECT', id })}
+        onNew={() => { if (activeConv?.messages.length > 0) dispatch({ type: 'CREATE' }) }}
+        onDelete={id => dispatch({ type: 'DELETE', id })}
         onToggle={() => setSidebarOpen(o => !o)}
       />
 
-      {/* Main */}
+      {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100vh' }}>
 
-        {/* Top bar */}
-        <div style={{
+        {/* ── Top bar ── */}
+        <header role="banner" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '0 20px', height: 56, flexShrink: 0,
           borderBottom: '1px solid var(--border)',
-          background: 'rgba(12,12,18,.85)', backdropFilter: 'blur(14px)',
+          background: 'rgba(9,9,15,.88)', backdropFilter: 'blur(16px)',
+          position: 'sticky', top: 0, zIndex: 20,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {!sidebarOpen && (
-              <button onClick={() => setSidebarOpen(true)} style={{
-                background: 'none', border: 'none', color: 'var(--t3)',
-                cursor: 'pointer', padding: 7, borderRadius: 8, display: 'flex',
-                transition: 'color .15s',
-              }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <button
+                className="btn-icon"
+                onClick={() => setSidebarOpen(true)}
+                aria-label="Open sidebar"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <line x1="3" y1="6"  x2="21" y2="6"/>
                   <line x1="3" y1="12" x2="21" y2="12"/>
                   <line x1="3" y1="18" x2="21" y2="18"/>
@@ -223,30 +250,47 @@ export default function Home() {
             <ModelSelector models={MODELS} value={model} onChange={setModel} disabled={streaming} />
           </div>
 
-          {activeConv?.messages.length > 0 && (
-            <button onClick={clearChat} style={{
-              background: 'none', border: '1px solid var(--border)', color: 'var(--t3)',
-              cursor: 'pointer', padding: '5px 13px', borderRadius: 8,
-              fontSize: 12, fontWeight: 600, transition: 'all .15s',
-            }}>
-              Clear
-            </button>
-          )}
-        </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {streaming && (
+              <span style={{ fontSize: 11, color: 'var(--t3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', animation: 'blink .9s infinite' }} />
+                Generating
+              </span>
+            )}
+            {activeConv?.messages.length > 0 && (
+              <button
+                className="btn-ghost"
+                onClick={() => dispatch({ type: 'CLEAR' })}
+                aria-label="Clear conversation"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </header>
 
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}>
+        {/* ── Messages ── */}
+        <main
+          role="main"
+          aria-label="Conversation"
+          style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}
+        >
           {!activeConv?.messages.length ? (
-            <EmptyState model={MODELS.find(m => m.id === model)} />
+            <EmptyState model={currentModel} onSend={sendMessage} />
           ) : (
-            <div style={{ maxWidth: 740, margin: '0 auto', padding: '28px 0 12px' }}>
+            <div
+              role="log"
+              aria-live="polite"
+              aria-label="Chat messages"
+              style={{ maxWidth: 760, margin: '0 auto', padding: '28px 0 12px' }}
+            >
               {activeConv.messages.map((msg, i) => (
                 <Message key={msg.id ?? i} message={msg} />
               ))}
-              <div ref={bottomRef} />
+              <div ref={bottomRef} aria-hidden="true" />
             </div>
           )}
-        </div>
+        </main>
 
         <InputBar onSend={sendMessage} streaming={streaming} onStop={stopStream} />
       </div>
@@ -254,39 +298,50 @@ export default function Home() {
   )
 }
 
-function EmptyState({ model }) {
-  const prompts = [
-    'Explain quantum computing simply',
-    'Write a Python web scraper',
-    'Review my code for bugs',
-    'Draft a professional email',
-  ]
+/* ─── Empty state ─── */
+const EXAMPLE_PROMPTS = [
+  { icon: '💻', text: 'Write a Python script that scrapes product prices from a website' },
+  { icon: '✍️', text: 'Draft a professional email declining a meeting politely' },
+  { icon: '🔬', text: 'Explain quantum entanglement in simple terms with an analogy' },
+  { icon: '🐛', text: 'Review this code for bugs, edge cases, and improvements' },
+]
+
+function EmptyState({ model, onSend }) {
   return (
     <div style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center',
-      justifyContent: 'center', height: '100%', gap: 24, padding: '0 24px',
+      justifyContent: 'center', height: '100%', gap: 32, padding: '40px 24px',
     }}>
       <div style={{ textAlign: 'center' }}>
-        <div style={{
-          width: 60, height: 60, borderRadius: 20, margin: '0 auto 16px',
-          background: 'linear-gradient(135deg,#6366f1,#8b5cf6)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 28, boxShadow: '0 8px 32px rgba(99,102,241,.3)',
-        }}>✦</div>
-        <p style={{ fontSize: 24, fontWeight: 800, color: 'var(--t1)', letterSpacing: '-.03em' }}>
-          How can I help?
-        </p>
-        <p style={{ fontSize: 14, color: 'var(--t3)', marginTop: 6 }}>
+        <div
+          className="logo-icon"
+          style={{
+            width: 64, height: 64, borderRadius: 22, margin: '0 auto 18px',
+            background: 'linear-gradient(135deg, #6d5ce7, #a78bfa)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 30,
+          }}
+          aria-hidden="true"
+        >✦</div>
+        <h1 style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-.04em', marginBottom: 8 }}>
+          <span className="gradient-text">How can I help?</span>
+        </h1>
+        <p style={{ fontSize: 14, color: 'var(--t3)' }}>
           {model?.label} · {model?.desc}
         </p>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 520 }}>
-        {prompts.map(p => (
-          <div key={p} style={{
-            padding: '8px 14px', borderRadius: 99, border: '1px solid var(--border)',
-            fontSize: 13, color: 'var(--t2)', background: 'rgba(255,255,255,0.03)',
-            cursor: 'default',
-          }}>{p}</div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, maxWidth: 540, width: '100%' }}>
+        {EXAMPLE_PROMPTS.map(({ icon, text }) => (
+          <button
+            key={text}
+            className="prompt-chip anim-fade-up"
+            onClick={() => onSend(text)}
+            aria-label={`Try: ${text}`}
+          >
+            <span style={{ fontSize: 18, flexShrink: 0 }} aria-hidden="true">{icon}</span>
+            <span>{text}</span>
+          </button>
         ))}
       </div>
     </div>
