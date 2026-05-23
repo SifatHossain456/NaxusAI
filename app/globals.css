@@ -299,6 +299,26 @@ html, body {
   letter-spacing: .03em;
 }
 
+/* ─── Scroll-to-bottom button ─── */
+.scroll-btn {
+  position: absolute; bottom: 100px; right: 24px; z-index: 10;
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--bg-elevated); border: 1px solid var(--border-2);
+  color: var(--t2); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 20px rgba(0,0,0,.5);
+  transition: all .15s; animation: fadeIn .2s ease;
+}
+.scroll-btn:hover {
+  background: var(--accent-dim); border-color: var(--accent-ring);
+  color: var(--accent-2); transform: translateY(-1px);
+}
+
+/* ─── Mobile responsive ─── */
+@media (max-width: 767px) {
+  .hide-mobile { display: none !important; }
+}
+
 /* ─── Empty state prompt chips ─── */
 .prompt-chip {
   display: flex; align-items: flex-start; gap: 10px;
